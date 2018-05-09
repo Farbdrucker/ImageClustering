@@ -72,6 +72,8 @@ class ACA(object):
 
         Q,R = linalg.qr(A, overwrite_a = True, mode = 'economic')
         print(A.shape, Q.shape, R.shape)
+        if W.shape[0]< self.k:
+            self.k = W.shape[0]
         eval, evec = eigsh(dot(R,R.T),k = self.k)
         eval = sparse.diags(eval,0)
         evec = np.mat(evec).T * Q.T
@@ -130,6 +132,7 @@ class ACA(object):
     '''
     def __SimFunction(self, U, ind):
         D = np.zeros(self.m)
+
         for i in range(self.m):
             D[i] = np.linalg.norm(U[ind] - U[i])**2
 

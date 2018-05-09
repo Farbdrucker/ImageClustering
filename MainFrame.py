@@ -16,7 +16,7 @@ class MainFrame(object):
     maxBrushSize = 50
     DEFAULT_COLOR = 'blue'
 
-
+    __isBusy = False
     oImage = None
     mask = 0
     Marker = np.zeros((canvas_height, canvas_width))
@@ -54,6 +54,13 @@ class MainFrame(object):
         self.SaveButton.grid(column = 1, row = 8)
         self.PaintSetup()
 
+    def __BusyManager(self):
+        if self.__isBusy == True:
+            self.root.config(cursor='')
+            self.__isBusy = False
+        else:
+            self.root.config(cursor='clock')
+            self.__isBusy = True
     def Save(self):
         saveDir = tkFileDialog.asksaveasfilename(initialdir = self.rootDir,
                                         title = "Select file",
@@ -95,13 +102,27 @@ class MainFrame(object):
 
     def LoadImage(self):
         # load the .gif image file
-        filename = tkFileDialog.askopenfilename(initialdir = self.rootDir,
+        files = tkFileDialog.askopenfilenames(initialdir = self.rootDir,
                                         title = "Select file",
                                         filetypes = (("jpeg files","*.jpg"),
                                                     ("all files","*.*")))
-        print filename
-        if filename != '':
-            self.oImage = Image.open(filename)
+        if len(files)>1:
+            images = map(Image.open, files)
+            widths, heights = zip(*(i.size for i in images))
+
+            totalWidth = sum(widths)
+            totalHeight = max(heights)
+            self.oImage = Image.new('RGB', (totalWidth, totalHeight))
+            xOffset = 0
+            for im in images:
+                self.oImage.paste(im, (xOffset,0))
+                xOffset += im.size[0]
+
+        elif len(files) ==1:
+            self.oImage = Image.open(files[0])
+
+        if files != '':
+
             self.canvas_width, self.canvas_height= self.GetNewSize(self.oImage)
 
             self.oImage = self.oImage.resize((self.canvas_width, self.canvas_height))
@@ -138,16 +159,34 @@ class MainFrame(object):
             self.Canvas.create_line(self.old_x, self.old_y, event.x, event.y,
                                width=self.line_width, fill=color,
                                capstyle=ROUND, smooth=TRUE, splinesteps=36)
-            if event.x >= 0 and event.y >= 0 and event.x< self.canvas_width and event.y < self.canvas_height:
+
+            if event.x >= 0 and event.y >= 0 and event.x< self.canvas_width and event.y< self.canvas_height:
                 if color == 'blue':
-                    self.Marker[event.y][event.x] = 1
+                    self.SetMarker(event.x, event.y, 1)
                 elif color =='green':
-                    self.Marker[event.y][event.x] = -1
+                    self.SetMarker(event.x, event.y, -1)
 
         self.old_x = event.x
         self.old_y = event.y
 
+    def SetMarker(self, x,y, val):
 
+        lx, ux = self.GetBorder(x, self.canvas_width)
+        ly, uy = self.GetBorder(y, self.canvas_height)
+        print('{}x{}: ({},{}): {}-{}, {}-{}'.format(self.canvas_width,self.canvas_height,x,y,x-lx,x+ux,y-ly,y+uy))
+        for i in range(y - ly, y+uy):
+            for j in range(x - lx, x + ux):
+                self.Marker[i][j] = val
+
+    def GetBorder(self, x, border):
+        l = int(np.floor(0.5*0.7 * self.line_width))
+        if x-l < 0:
+            l = x
+        if x+l >= border:
+            u = border - x
+        else:
+            u = l
+        return l, u
     def reset(self, event):
         self.old_x, self.old_y = None, None
 
@@ -161,13 +200,16 @@ class MainFrame(object):
             self.mask += new
 
         elif self.oImage is not None:
+            self.__BusyManager()
             self.mask = self.k -2
             self.GetEig()
             self.ApplyMask(np.array(self.oImage),self.V[self.mask][0])
             self.UpdateButtonName()
+            self.__BusyManager()
             print 'finished'
         else:
             tkMessageBox.showinfo("Error", "Load Image first!")
+
 
     def GetEig(self):
         self.D,self.V = ACA(image = np.array(self.oImage),
@@ -185,27 +227,33 @@ class MainFrame(object):
         m = np.max(np.abs(u))
         for i in range(A.shape[0]):
             for j in range(A.shape[1]):
-                #tmp = (u[i * A.shape[1] + j]/m + 2) *255
-                #A[i][j][:] = tmp
-                if u[i * A.shape[1] + j] <0:
-                    if len(A.shape) == 2:
-                        A[i][j] = 255
-                    if len(A.shape) == 3:
-                        A[i][j][0] = 255
-                        A[i][j][1] = 0
-                        A[i][j][2] = 0
-
+                if (u[i * A.shape[1] + j] <0 or self.Marker[i][j] == -1) and self.Marker[i][j]!=1:
+                    self.Overlay(A, i, j)
 
         Im = Image.fromarray(np.uint8(A))
         self.IntoCanvas(Im)
 
+    def Overlay(self, A, i, j):
+        if len(A.shape) == 2:
+            A[i][j] = 255
+        if len(A.shape) == 3:
+            A[i][j][0] = 255
+            A[i][j][1] = 0
+            A[i][j][2] = 0
+
     def ConvSplit(self):
         if self.oImage is not None and self.activeMarker == True:
+            #self.IntoCanvas(Image.fromarray(np.uint8((self.Marker+1) *255/2.)))
+
+
+            self.__BusyManager()
             if self.V is None:
                 self.GetEig()
             u0 = np.mat(self.Marker).flatten().T
             u0,u = ConvSplittingFunc(u0 =u0, phi = self.V, lamb = self.D, maxIter = 100)
             print u0
             self.ApplyMask(np.array(self.oImage),u0)
+            self.ResetMarker()
+            self.__BusyManager()
         else:
             tkMessageBox.showinfo("Error", "An error occured, load image and tag an object!")
